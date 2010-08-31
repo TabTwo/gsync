@@ -1,0 +1,41 @@
+* Calendar Syncing Strategy
+
+    - store database dict(uid: (remline, fn, ln, link)) that should be on google
+
+** Process
+    - get all (changed?) events from google
+        : authenticate()
+        : get_calendars()
+        : get_events()
+        => events list[Remevent]
+    - compare to database and make lists of:
+        : detect_remote_changes()
+        => changed list[Remevent]
+        => deleted list[(remline, fn, ln)]
+        => new     list[Remevent]
+    - process these lists to local
+        - prompt for changes to local files
+          TODO: make this better, actually edit remind file !!!
+            1. set default remind file for additions
+            2. different levels of prompting for add/update/delete
+                - auto/ask/ignore
+        : Event.add_local()
+        : Event.update_local()
+        : delete_local()
+        => database
+    - save database
+    - at this point, local is authoritative
+    - get local events from remind
+        : get_local_calendar()
+        => dict(uid: Event)
+    - compare to database and make lists of:
+        : detect_local_changes()
+        => deleted list(uid)
+        => new     list(uid)
+        - local cannot change, only delete and add new
+    - process these lists to google
+        : process_local_changes()
+        : service.DeleteEvent()
+        : add_event()
+        => database
+    - save database

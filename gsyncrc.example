@@ -1,0 +1,9 @@
+# Google account details
+user = user@gmail.com
+password = xxxxxxxxxx
+# Verbosity: one of 'debug', 'info', 'warning', 'error', 'critical'
+loglevel = debug
+# Location of ics file
+timezone = 'Europe/London'
+remnewlinechar = '|'
+remlocation = ' at '
