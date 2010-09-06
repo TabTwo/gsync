@@ -162,7 +162,12 @@ class Remevent():
         remsstring = '{date} * {tag} {dur} {time} {body}'
         remsdateformat = '%Y/%m/%d'
         # convert times
-        start = dtparser.parse(gevent.when[0].start_time)
+        try:
+            start = dtparser.parse(gevent.when[0].start_time)
+        except IndexError:
+            logger.error(u'Event has no when property!')
+            print gevent
+            raise
         if start.tzinfo:
             start = start.astimezone(tzlocal())
         else:
@@ -533,8 +538,7 @@ def delete_remote(service, uids):
             service.DeleteEvent(link)
         except gdata.service.RequestError, msg:
             logger.debug(u'...deletion failed: {0}'.format(msg))
-        else:
-            del caldb['remotedb'][uid]
+        del caldb['remotedb'][uid]
 
 def add_events(service, uids, events):
     """ add list of events """
