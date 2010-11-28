@@ -22,6 +22,7 @@ _encoding = locale.getpreferredencoding()
 _qdtformat = '%Y-%m-%dT%H:%M:%S.000Z'
 _dtformat = '%Y-%m-%dT%H:%M:%S%z'
 _ddformat = '%Y-%m-%d'
+_remformat = '%d %b %Y'
 # note convolutions to get colon in timezone offset
 options = ConfigObj(os.path.expanduser('~/.gsyncrc'))
 caldb = shelve.open(os.path.expanduser('~/.gcaldb'), writeback=True)
@@ -51,6 +52,7 @@ else:
 class Event():
     """ hold event information """
     def __init__(self, remline):
+        # TODO: workaround line splits/continuations
         fileinfo, remline = remline.strip().split('\n')
         self.remline = remline
         self.linenumber, self.filename = fileinfo.split(' ')
@@ -162,6 +164,7 @@ class Remevent():
         remsstring = '{date} * {tag} {dur} {time} {body}'
         remsdateformat = '%Y/%m/%d'
         # convert times
+        # TODO: add time zone to rem TAG
         try:
             start = dtparser.parse(gevent.when[0].start_time)
         except IndexError:
@@ -411,8 +414,8 @@ def get_local_calendar():
     #   -g      sort
     args = ['/usr/bin/rem', '-s12', '-b2', '-l', '-g']
     # set date as 90 days ago
-    args.append(datetime.strftime(datetime.utcnow() - timedelta(days=90),
-        _ddformat))
+    args.extend(datetime.strftime(datetime.utcnow() - timedelta(days=90),
+        _remformat).split())
     rem = subprocess.Popen(args, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, close_fds=True).communicate()
     # TODO: close process?
@@ -483,8 +486,8 @@ def detect_remote_changes(service, events):
             if rem.origuid in caldb['remotedb']:
                 del caldb['remotedb'][rem.origuid]
             else:
-                logger.debug(u'Event from Google not in database: {0}.'.format(
-                    rem.remline))
+                logger.debug(u'Event from Google not in database:\n{0}'.format(
+                    rem.remline.decode(_encoding)))
             caldb['remotedb'][rem.remuid] = (rem.remline, rem.filename,
                     rem.linenumber, rem.link)
         else:
