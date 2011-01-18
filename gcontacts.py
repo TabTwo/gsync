@@ -46,8 +46,8 @@ def makelogger(loglevel):
     logger.setLevel(loglevel)
     ch = logging.StreamHandler()
     ch.setLevel(loglevel)
-    # TODO: alter asctime format
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+            '%H:%M:%S')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     return logger
@@ -108,6 +108,7 @@ def getcontacts(user, auth, contactid=None, data=None):
         url += '?' + urllib.urlencode(data)
     gcontactsrequest = urllib2.Request(url, None, headers)
     try:
+        # Error 404: Not Found if contact has been deleted
         gcontactsconn = urllib2.urlopen(gcontactsrequest)
     except urllib2.HTTPError, msg:
         handleconnectionerror(msg)
@@ -146,6 +147,7 @@ def sendcontact(user, auth, contactxml, contactid=None, delete=False):
     gcontactsrequest = urllib2.Request(url, contactxml, headers)
     # this will fail with Error 412: Precondition Failed if sent contact exists
     # and has different etag - i.e. has been changed on Google since last sync.
+    # Error 404: Not Found if contact has been deleted
     # TODO: handle this somehow
     # perhaps make sure we want to overwrite then delete + add new
     try:

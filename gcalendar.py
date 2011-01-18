@@ -62,10 +62,12 @@ class Event():
         tzfilename = '/usr/share/zoneinfo/' + options['timezone']
         if os.path.isfile(tzfilename):
             self.timezone = tzfile(tzfilename)
+            self.timezonename = options['timezone']
         else:
             logging.debug('No timezone file {0}. ' + \
                     'Setting to local zone.'.format(options['timezone']))
             self.timezone = tzlocal()
+            self.timezonename = 'localtime'
         self.transp = 'OPAQUE'
         self.categories = []
         self.add_date(fields[0])
@@ -156,6 +158,7 @@ class Remevent():
     """ a remind event """
     def __init__(self, gevent):
         """ convert a google event to a remind event """
+        self.ignore = False
         remstring = 'REM {date}{time}{dur}{tag} \\\n\t' + \
                 'MSG %g %3 %"{summary}{location}{description}%"%\n'
         remdateformat = '%b %-d %Y'
@@ -164,17 +167,20 @@ class Remevent():
         remsstring = '{date} * {tag} {dur} {time} {body}'
         remsdateformat = '%Y/%m/%d'
         # convert times
-        # TODO: add time zone to rem TAG
+        # start time
         try:
             start = dtparser.parse(gevent.when[0].start_time)
         except IndexError:
-            logger.error(u'Event has no when property!')
-            print gevent
-            raise
+            # TODO: do something with recurrence...
+            logger.error(u'Event "{0}" has no when property - ignoring.'.format(
+                gevent.title.text))
+            self.ignore = True
+            return
         if start.tzinfo:
             start = start.astimezone(tzlocal())
         else:
             start = start.replace(tzinfo=tzlocal())
+        # end time
         end = dtparser.parse(gevent.when[0].end_time)
         if end.tzinfo:
             end = end.astimezone(tzlocal())
@@ -199,6 +205,18 @@ class Remevent():
             duration = '{0[0]}:{0[1]:02}'.format(divmod(durminutes, 60))
             remdict['dur'] = ' DURATION ' + duration
             remsdict['dur'] = durminutes
+        # extract filename, linenumber, original uid, timezonename
+        self.filename, self.linenumber, self.origuid = None, None, None
+        timezonename = None
+        for ep in gevent.extended_property:
+            if ep.name == 'filename':
+                self.filename = ep.value
+            elif ep.name == 'linenumber':
+                self.linenumber = int(ep.value)
+            elif ep.name == 'uid':
+                self.origuid = ep.value
+            elif ep.name == 'timezonename':
+                timezonename = ep.value
         # make tags
         cal = None
         cat = None
@@ -218,11 +236,22 @@ class Remevent():
         if cat:
             remdict['tag'] = ' TAG ' + cat
             remsdict['tag'] = cat
+        # timezone
+        if timezonename is not None and timezonename != options['timezone']:
+            if remdict['tag'] != '':
+                remdict['tag'] += ',TZ={0}'.format(timezonename)
+            else:
+                remdict['tag'] = ' TAG TZ={0}'.format(timezonename)
+            if remsdict['tag'] != '*':
+                remsdict['tag'] += ',TZ={0}'.format(timezonename)
+            else:
+                remsdict['tag'] = 'TZ={0}'.format(timezonename)
         # get transparency
         if gevent.transparency.value == 'TRANSPARENT':
             if remdict['tag'] != '':
-                remdict['tag'] += ','
-            remdict['tag'] += 'TRANSP=TRANSPARENT'
+                remdict['tag'] += ',TRANSP=TRANSPARENT'
+            else:
+                remdict['tag'] = ' TAG TRANSP=TRANSPARENT'
             if remsdict['tag'] != '*':
                 remsdict['tag'] += ',TRANSP=TRANSPARENT'
             else:
@@ -240,15 +269,6 @@ class Remevent():
                 remdict['description']).replace('\n', '').replace('\\', '')
         self.remsstring = remsstring.format(**remsdict)
         self.remuid = hashlib.md5(remsstring.format(**remsdict)).hexdigest()
-        # extract filename, linenumber, original uid
-        self.filename, self.linenumber, self.origuid = None, None, None
-        for ep in gevent.extended_property:
-            if ep.name == 'filename':
-                self.filename = ep.value
-            elif ep.name == 'linenumber':
-                self.linenumber = int(ep.value)
-            elif ep.name == 'uid':
-                self.origuid = ep.value
         # record edit link
         self.link = gevent.GetEditLink().href
 
@@ -268,8 +288,8 @@ def make_logger(loglevel):
     logger.setLevel(loglevel)
     ch = logging.StreamHandler()
     ch.setLevel(loglevel)
-    # TODO: alter asctime format
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s',
+            '%H:%M:%S')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     return logger
@@ -297,7 +317,10 @@ def get_calendars(service, allcals=False):
     # check/update calendar ids
     caldict = {}
     for c in feed.entry:
-        caldict[c.title.text] = c.id.text.rpartition('/')[2].replace('%40', '@')
+        try:
+            caldict[c.title.text] = c.id.text.rpartition('/')[2].replace('%40', '@')
+        except AttributeError:
+            logger.error(u'Calendar list error. {0}'.format(c))
     caldb['calendars'] = caldict
     caldb.sync()
     return feed
@@ -375,11 +398,12 @@ def add_event(service, event):
     #   * gd:reminder
     # http://code.google.com/apis/gdata/docs/1.0/elements.html#gdEventKind
 
-    # add filename/linenumber/uid as custom properties
+    # add filename/linenumber/uid/timezonename as custom properties
     fn = gdata.ExtendedProperty('filename', event.filename)
     ln = gdata.ExtendedProperty('linenumber', event.linenumber)
     uid = gdata.ExtendedProperty('uid', event.uid)
-    gevent.extended_property.extend([fn, ln, uid])
+    tzn = gdata.ExtendedProperty('timezonename', event.timezonename)
+    gevent.extended_property.extend([fn, ln, uid, tzn])
 
     # uri comes from event.categories.value[0]
     #   =>  split categories into different calendars
@@ -413,7 +437,7 @@ def get_local_calendar():
     #   -l      include fileinfo line
     #   -g      sort
     args = ['/usr/bin/rem', '-s12', '-b2', '-l', '-g']
-    # set date as 90 days ago
+    # set date as 90 days ago (TODO: this should be configurable)
     args.extend(datetime.strftime(datetime.utcnow() - timedelta(days=90),
         _remformat).split())
     rem = subprocess.Popen(args, stdout=subprocess.PIPE,
@@ -452,6 +476,8 @@ def detect_remote_changes(service, events):
     logger.info(u'{0} events from Google calendars.'.format(len(events)))
     for e in events:
         rem = Remevent(e)
+        if rem.ignore:
+            continue
         if e.event_status.value == 'CANCELED':
             # event has been deleted
             # no point in using rem.remuid since it won't be in db - we can
@@ -536,6 +562,7 @@ def delete_remote(service, uids):
     """ delete list of events """
     for uid in uids:
         link = caldb['remotedb'][uid][3]
+        # TODO: display summary in message
         logger.debug(u'Deleting "{0}" from Google.'.format(uid))
         try:
             service.DeleteEvent(link)
