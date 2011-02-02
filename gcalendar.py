@@ -545,13 +545,17 @@ def detect_local_changes(localevents):
     logger.info(u'Detected {0} local deletions.'.format(len(deleted)))
     return list(new), list(deleted)
 
-def delete_all_remote():
+def delete_all_remote(onlycalname='all'):
     """ delete all remote events """
     logger.debug(u'Logging into Google Calendar.')
     service = authenticate()
     logger.debug(u'Retrieving calendar list.')
     cals = get_calendars(service)
     for calname, calid in caldb['calendars'].items():
+        if onlycalname != 'all' and calname != onlycalname:
+            # only delete specified calendar if onlycalname is given
+            logger.debug(u'Not deleting events from {0}.'.format(calname))
+            continue
         logger.debug(u'Retrieving event list for {0}.'.format(calname))
         evfeed = get_events(service, calid)
         logger.debug(u'Deleting all events from {0}.'.format(calname))
