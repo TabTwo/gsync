@@ -64,7 +64,7 @@ class Event():
             self.timezone = tzfile(tzfilename)
             self.timezonename = options['timezone']
         else:
-            logging.debug('No timezone file {0}. ' + \
+            logger.debug('No timezone file {0}. ' + \
                     'Setting to local zone.'.format(options['timezone']))
             self.timezone = tzlocal()
             self.timezonename = 'localtime'
@@ -94,7 +94,7 @@ class Event():
                     if os.path.isfile(tzfilename):
                         self.timezone = tzfile(tzfilename)
                     else:
-                        logging.error('No timezone file {0}'.format(v))
+                        logger.error('No timezone file {0}'.format(v))
                 elif k == 'TRANSP':
                     self.transp = v
             else:
@@ -378,7 +378,21 @@ def get_all_events(service, updatedmin=None):
     for calid in caldb['calendars'].values():
         evfeed = get_events(service, calid, updatedmin=updatedmin)
         events += evfeed.entry
+    # store xml for reference
+    if options['loglevel'] == 'debug' and len(events):
+        logger.debug(u'Saving Google event xml.')
+        savexml(events)
     return events
+
+def savexml(eventlist):
+    import xml.dom.minidom
+    eventxml = ''
+    for e in eventlist:
+        eventxml += xml.dom.minidom.parseString(str(e)).toprettyxml()
+    xmlfilename = 'google-calendar-{0}.xml'.format(datetime.now().strftime(_dtformat))
+    xmlfile = codecs.open(xmlfilename, 'w', _encoding)
+    xmlfile.write(eventxml)
+    xmlfile.close()
 
 def add_event(service, event):
     """ add a single event """
@@ -455,7 +469,7 @@ def get_local_calendar():
 
     # check if event is in range
     #evstart = parsedatestring('%s%s%s' % (year, month, day))
-    #logging.debug('DTSTART: %s (%s, %s, %s)' % (evstart, year, month, day))
+    #logger.debug('DTSTART: %s (%s, %s, %s)' % (evstart, year, month, day))
     #if options.fr is not None:
     #    if evstart < options.fr:
     #        continue

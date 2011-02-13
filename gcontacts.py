@@ -289,7 +289,7 @@ def getallfromgoogle():
     return contactsxml
 
 def savexml(xml):
-    xmlfilename = 'google-{0}.xml'.format(datetime.now().strftime(_dtformat))
+    xmlfilename = 'google-contacts-{0}.xml'.format(datetime.now().strftime(_dtformat))
     xmlfile = codecs.open(xmlfilename, 'w', _encoding)
     xmlfile.write(xml)
     xmlfile.close()
