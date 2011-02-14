@@ -580,8 +580,17 @@ def delete_remote(service, uids):
     """ delete list of events """
     for uid in uids:
         link = caldb['remotedb'][uid][3]
-        # TODO: display summary in message
-        logger.debug(u'Deleting "{0}" from Google.'.format(uid))
+        remmsg = caldb['remotedb'][uid][0].partition('MSG')[2].strip()
+        if remmsg:
+            if '%' in remmsg:
+                # strip remind control sequences
+                import re
+                ctrl = re.compile(r"%.")
+                remmsg = ctrl.sub("", remmsg).strip(" %")
+        else:
+            remmsg = uid
+        logger.debug(u'Deleting "{0}" from Google.'.format(
+                remmsg.decode(_encoding)))
         try:
             service.DeleteEvent(link)
         except gdata.service.RequestError, msg:
