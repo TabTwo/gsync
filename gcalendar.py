@@ -487,8 +487,12 @@ def detect_remote_changes(service, events):
     new = []
     deleted = []
     unchanged, notindb = 0, 0
+    updatedtimes = {}
     logger.info(u'{0} events from Google calendars.'.format(len(events)))
     for e in events:
+        # record updated time
+        updminute = e.updated.text[:16]
+        updatedtimes[updminute] = updatedtimes.setdefault(updminute, 0) + 1
         rem = Remevent(e)
         if rem.ignore:
             continue
@@ -543,7 +547,7 @@ def detect_remote_changes(service, events):
             u'{0} events from Google calendars.'.format(unchanged))
     logger.debug(u'{0} deleted events from Google calendars '.format(notindb) +
             u'are not in the local database.')
-    return new, changed, deleted
+    return new, changed, deleted, updatedtimes
 
 def delete_local(remline, fn, ln, link):
     """ delete an event from the remind file """
@@ -618,20 +622,42 @@ def execute():
     updatedmin = None
     if 'lastsync' in caldb.keys() and not runoptions.getall:
         updatedmin = caldb['lastsync']
-    remoteevents = get_all_events(service, updatedmin)
-    # compare to database
-    if 'remotedb' not in caldb:
-        caldb['remotedb'] = {}
-    new, changed, deleted = detect_remote_changes(service, remoteevents)
-    # deal with changes
-    for e in new:
-        e.add_local()
-    for e in changed:
-        e.update_local()
-    for e in deleted:
-        delete_local(*e)
-    if len(new) or len(changed) or len(deleted):
-        raw_input('Deal with changes, then press return to continue.')
+    acceptGoogle = False
+    while acceptGoogle is False:
+        remoteevents = get_all_events(service, updatedmin)
+        # compare to database
+        if 'remotedb' not in caldb:
+            caldb['remotedb'] = {}
+        new, changed, deleted, updatedtimes = detect_remote_changes(service,
+                remoteevents)
+        # deal with changes
+        for e in new:
+            e.add_local()
+        for e in changed:
+            e.update_local()
+        for e in deleted:
+            delete_local(*e)
+        if len(new) or len(changed) or len(deleted):
+            print "Deal with changes, then:"
+            print "\t- press return to accept and continue"
+            print "\t- enter 'a' to abort"
+            print "\t- enter 't' to set new updatedmin"
+            userinput = raw_input("\t\t: ")
+            # opportunity to reject changes from google
+            if userinput == "a":
+                caldb.close()
+                return
+            elif userinput == "t":
+                # show updated times
+                # TODO put this somewhere else
+                udtlist = sorted(updatedtimes.items())
+                for i, udt in enumerate(udtlist):
+                    print u"{0}. {1[0]} - ({1[1]} events)".format(i, udt)
+                userinput = raw_input("\tSelect: ")
+                # TODO badly in need of input validation!
+                updatedmin = udtlist[int(userinput)][0] + ":59.999Z"
+            else:
+                acceptGoogle = True
     # get local events
     localevents = get_local_calendar()
     new, deleted = detect_local_changes(localevents)
