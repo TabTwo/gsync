@@ -41,7 +41,8 @@ parser.add_option('-l', '--local', dest='preferlocal', action='store_true',
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true',
         help='print what\'s happening (loglevel = debug)')
 parser.add_option('-R', '--reset', dest='reset', action='store_true',
-        help='reset database - will delete all Google calendar events')
+        help='reset database - will delete all Google calendar events',
+        default=False)
 (runoptions, args) = parser.parse_args()
 
 # set logging
