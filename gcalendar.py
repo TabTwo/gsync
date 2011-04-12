@@ -40,6 +40,8 @@ parser.add_option('-l', '--local', dest='preferlocal', action='store_true',
         default=None)
 parser.add_option('-v', '--verbose', dest='verbose', action='store_true',
         help='print what\'s happening (loglevel = debug)')
+parser.add_option('-R', '--reset', dest='reset', action='store_true',
+        help='reset database - will delete all Google calendar events')
 (runoptions, args) = parser.parse_args()
 
 # set logging
@@ -481,6 +483,16 @@ def get_local_calendar():
     localcalendar = dict([(e.uid, e) for e in events])
     return localcalendar
 
+def askdelete(event, dbevent):
+    """ask if an event's remote deletion should be accepted"""
+    remline, fn, ln, link = dbevent
+    print '# fileinfo {0} {1}'.format(ln, fn)
+    print remline
+    userinput = raw_input("\tAccept deletion (y/n)? ")
+    if userinput == "y":
+        return True
+    return False
+
 def detect_remote_changes(service, events):
     """ compare events to those in db """
     changed = []
@@ -490,22 +502,24 @@ def detect_remote_changes(service, events):
     updatedtimes = {}
     logger.info(u'{0} events from Google calendars.'.format(len(events)))
     for e in events:
-        # record updated time
-        updminute = e.updated.text[:16]
-        updatedtimes[updminute] = updatedtimes.setdefault(updminute, 0) + 1
         rem = Remevent(e)
         if rem.ignore:
             continue
         if e.event_status.value == 'CANCELED':
             # event has been deleted
-            # no point in using rem.remuid since it won't be in db - we can
-            # ignore events created and deleted on Google between syncs
-            # Google keeps deleted events for a while(?) - this might have been
-            # deleted in last sync, so ignore if it's not in the db
+            # * no point in using rem.remuid since it won't be in db - we can
+            #   ignore events created and deleted on Google between syncs
+            # * Google keeps deleted events for a while(?) - this might have
+            #   been deleted in last sync, so ignore if it's not in the db
+            # * Also Google often sets status canceled even if event has not
+            #   been deleted - NFI why this happens
+            # Might have to ask about individual events before deleting from
+            # caldb?
             if rem.origuid:
                 if rem.origuid in caldb['remotedb']:
-                    deleted.append(caldb['remotedb'][rem.origuid])
-                    del caldb['remotedb'][rem.origuid]
+                    if askdelete(e, caldb['remotedb'][rem.origuid]):
+                        deleted.append(caldb['remotedb'][rem.origuid])
+                        del caldb['remotedb'][rem.origuid]
                 else:
                     notindb += 1
         elif rem.origuid is None:
@@ -547,7 +561,7 @@ def detect_remote_changes(service, events):
             u'{0} events from Google calendars.'.format(unchanged))
     logger.debug(u'{0} deleted events from Google calendars '.format(notindb) +
             u'are not in the local database.')
-    return new, changed, deleted, updatedtimes
+    return new, changed, deleted
 
 def delete_local(remline, fn, ln, link):
     """ delete an event from the remind file """
@@ -579,6 +593,14 @@ def delete_all_remote(onlycalname='all'):
         logger.debug(u'Deleting all events from {0}.'.format(calname))
         for e in evfeed.entry:
             service.DeleteEvent(e.GetEditLink().href)
+
+def reset():
+    """ reset database and delete all remote events """
+    delete_all_remote()
+    logger.debug(u'Resetting local database.')
+    caldb['remotedb'] = {}
+    caldb['lastsync'] = datetime.strftime(datetime.utcnow(), _qdtformat)
+    caldb.close()
 
 def delete_remote(service, uids):
     """ delete list of events """
@@ -621,43 +643,22 @@ def execute():
     service = authenticate()
     updatedmin = None
     if 'lastsync' in caldb.keys() and not runoptions.getall:
+        # add a couple of seconds here?
         updatedmin = caldb['lastsync']
-    acceptGoogle = False
-    while acceptGoogle is False:
-        remoteevents = get_all_events(service, updatedmin)
-        # compare to database
-        if 'remotedb' not in caldb:
-            caldb['remotedb'] = {}
-        new, changed, deleted, updatedtimes = detect_remote_changes(service,
-                remoteevents)
-        # deal with changes
-        for e in new:
-            e.add_local()
-        for e in changed:
-            e.update_local()
-        for e in deleted:
-            delete_local(*e)
-        if len(new) or len(changed) or len(deleted):
-            print "Deal with changes, then:"
-            print "\t- press return to accept and continue"
-            print "\t- enter 'a' to abort"
-            print "\t- enter 't' to set new updatedmin"
-            userinput = raw_input("\t\t: ")
-            # opportunity to reject changes from google
-            if userinput == "a":
-                caldb.close()
-                return
-            elif userinput == "t":
-                # show updated times
-                # TODO put this somewhere else
-                udtlist = sorted(updatedtimes.items())
-                for i, udt in enumerate(udtlist):
-                    print u"{0}. {1[0]} - ({1[1]} events)".format(i, udt)
-                userinput = raw_input("\tSelect: ")
-                # TODO badly in need of input validation!
-                updatedmin = udtlist[int(userinput)][0] + ":59.999Z"
-            else:
-                acceptGoogle = True
+    remoteevents = get_all_events(service, updatedmin)
+    # compare to database
+    if 'remotedb' not in caldb:
+        caldb['remotedb'] = {}
+    new, changed, deleted = detect_remote_changes(service, remoteevents)
+    # deal with changes
+    for e in new:
+        e.add_local()
+    for e in changed:
+        e.update_local()
+    for e in deleted:
+        delete_local(*e)
+    if len(new) or len(changed) or len(deleted):
+        raw_input('Deal with changes, then press return to continue.')
     # get local events
     localevents = get_local_calendar()
     new, deleted = detect_local_changes(localevents)
@@ -672,5 +673,8 @@ def execute():
     caldb.close()
 
 if __name__ == '__main__':
-    execute()
+    if runoptions.reset:
+        reset()
+    else:
+        execute()
 
