@@ -378,7 +378,10 @@ def get_all_events(service, updatedmin=None):
     cals = get_calendars(service)
     logger.debug(u'Retrieving event list.')
     events = []
-    for calid in caldb['calendars'].values():
+    for calname, calid in caldb['calendars'].items():
+        if 'synconly' in options:
+            if calname not in options['synconly']:
+                continue
         evfeed = get_events(service, calid, updatedmin=updatedmin)
         events += evfeed.entry
     # store xml for reference

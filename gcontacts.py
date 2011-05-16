@@ -112,13 +112,12 @@ def getcontacts(user, auth, contactid=None, data=None):
         gcontactsconn = urllib2.urlopen(gcontactsrequest)
     except urllib2.HTTPError, msg:
         handleconnectionerror(msg)
+        return None
     # convert to unicode
-    gencoding = False
+    gencoding = _encoding
     for h in gcontactsconn.headers['content-type'].split(';'):
         if 'charset' in h:
             gencoding = h.split('=')[1]
-    if not gencoding:
-        gencoding = _encoding
     gcontacts = gcontactsconn.read()
     gcontactsconn.close()
     return unicode(gcontacts, gencoding)
@@ -157,13 +156,12 @@ def sendcontact(user, auth, contactxml, contactid=None, delete=False):
         logger.error(headers)
         logger.error(contactxml)
         handleconnectionerror(msg)
+        return contactxml
     # convert to unicode
-    gencoding = False
+    gencoding = _encoding
     for h in gcontactsconn.headers['content-type'].split(';'):
         if 'charset' in h:
             gencoding = h.split('=')[1]
-    if not gencoding:
-        gencoding = _encoding
     gcontacts = gcontactsconn.read()
     gcontactsconn.close()
     return unicode(gcontacts, gencoding)
@@ -172,6 +170,13 @@ def handleconnectionerror(msg):
     """ deal with errors from google connection """
     # TODO: not sure why these come as errors instead of response codes...
     # see http://code.google.com/apis/gdata/docs/2.0/reference.html#HTTPStatusCodes
+    if "404" in msg:
+        # contact not found
+        logger.error(u"Contact not found on Google.")
+        return
+    elif "412" in msg:
+        # changed since last sync
+        logger.error(u"Contact changed on Google since last sync.")
     logger.error(msg)
 
 def comparevcards(vcard, localvcard, auth):
@@ -372,10 +377,13 @@ def execute():
     for cuid in localchanges:
         logger.debug(u'Retrieving "{0}".'.format(localcontacts[cuid].fn.value))
         contactxml = getcontacts(options['user'], auth, cuid)
-        logger.debug(u'Parsing contact from Google.')
-        contact = xml2vcf.readXml(contactxml)[0]
-        logger.debug(u'Comparing "{0}".'.format(localcontacts[cuid].fn.value))
-        localcontacts[cuid] = comparevcards(contact, localcontacts[cuid], auth)
+        if contactxml is not None:
+            logger.debug(u'Parsing contact from Google.')
+            contact = xml2vcf.readXml(contactxml)[0]
+            logger.debug(u'Comparing "{0}".'.format(localcontacts[cuid].fn.value))
+            localcontacts[cuid] = comparevcards(contact, localcontacts[cuid], auth)
+        else:
+            logger.error(u'Contact not found at Google.')
 
     # write out contacts file
     logger.debug(u'Writing new local file.')
