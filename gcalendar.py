@@ -555,6 +555,9 @@ def detect_remote_changes(service, events):
         else:
             # can't detect any change in event
             unchanged += 1
+            # but update edit link in db
+            caldb['remotedb'][rem.remuid] = (rem.remline, rem.filename,
+                    rem.linenumber, e.GetEditLink().href)
     caldb.sync()
     logger.info(u'{0} new events from Google calendars.'.format(len(new)))
     logger.info(u'{0} changed events from Google calendars.'.format(
