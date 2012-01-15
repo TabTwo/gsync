@@ -96,6 +96,7 @@ class Event():
                     tzfilename = '/usr/share/zoneinfo/' + v
                     if os.path.isfile(tzfilename):
                         self.timezone = tzfile(tzfilename)
+                        self.timezonename = v
                     else:
                         logger.error('No timezone file {0}'.format(v))
                 elif k == 'TRANSP':
@@ -400,53 +401,6 @@ def savexml(eventlist):
     xmlfile.write(eventxml)
     xmlfile.close()
 
-def add_event(service, event):
-    """ add a single event """
-    gevent = gdata.calendar.CalendarEventEntry()
-    gevent.title = atom.Title(text=event.summary)
-    if event.location:
-        gevent.where.append(gdata.calendar.Where(value_string=event.location))
-    if event.description:
-        gevent.content = atom.Content(text=event.description)
-    gevent.when.append(event.gdatawhen())
-    gevent.transparency = gdata.calendar.Transparency()
-    gevent.transparency.value = event.transp
-    # default settings seem fine for these
-    #   * gd:who/gd:attendeeStatus?
-    #   * gd:eventStatus
-    #   * gd:visibility
-    #   * gd:reminder
-    # http://code.google.com/apis/gdata/docs/1.0/elements.html#gdEventKind
-
-    # add filename/linenumber/uid/timezonename as custom properties
-    fn = gdata.ExtendedProperty('filename', event.filename)
-    ln = gdata.ExtendedProperty('linenumber', event.linenumber)
-    uid = gdata.ExtendedProperty('uid', event.uid)
-    tzn = gdata.ExtendedProperty('timezonename', event.timezonename)
-    gevent.extended_property.extend([fn, ln, uid, tzn])
-
-    # uri comes from event.categories.value[0]
-    #   =>  split categories into different calendars
-    cal = 'default'
-    if len(event.categories):
-        cat = event.categories[0].capitalize()
-        if cat in caldb['calendars']:
-            cal = caldb['calendars'][cat]
-        else:
-            # add calendar for new categories
-            cal = new_calendar(service, cat)
-            caldb['calendars'][cat] = cal
-            caldb.sync()
-    uri = '/calendar/feeds/{0}/private/full'.format(cal)
-    try:
-        new_event = service.InsertEvent(gevent, uri)
-    except gdata.service.RequestError, msg:
-        print msg
-        return gevent, False
-
-    logger.debug(u'New event "{0}" added.'.format(event.summary[0:40]))
-    return new_event, True
-
 def get_local_calendar():
     """ get local calendar, return dict of (hash, event) """
     # get events from remind
@@ -570,12 +524,6 @@ def detect_remote_changes(service, events):
             u'are not in the local database.')
     return new, changed, deleted
 
-def delete_local(remline, fn, ln, link):
-    """ delete an event from the remind file """
-    print '# this event was deleted'
-    print '# fileinfo {0} {1}'.format(ln, fn)
-    print remline
-
 def detect_local_changes(localevents):
     """ compare to events in remote db """
     new = set(localevents.keys()) - set(caldb['remotedb'].keys())
@@ -583,6 +531,52 @@ def detect_local_changes(localevents):
     logger.info(u'Detected {0} local additions.'.format(len(new)))
     logger.info(u'Detected {0} local deletions.'.format(len(deleted)))
     return list(new), list(deleted)
+
+def delete_local(remline, fn, ln, link):
+    """ delete an event from the remind file """
+    print '# this event was deleted'
+    print '# fileinfo {0} {1}'.format(ln, fn)
+    print remline
+
+def delete_remote(service, link):
+    """ delete event given google link """
+    redirected = False
+    while True:
+        try:
+            service.DeleteEvent(link)
+        except gdata.service.RequestError, msg:
+            if msg[0]['status'] == 302 and redirected is False:
+                # redirect
+                try:
+                    link = msg[0]['body'].split('HREF="')[1].split('">here')[0]
+                    logger.debug(u'Request redirected...')
+                    redirected = True
+                except:
+                    logger.debug(u'Could not extract redirection link.')
+                    break
+            else:
+                logger.error(u'...deletion failed: {0}'.format(msg))
+                break
+        else:
+            break
+
+def delete_remote_list(service, uids):
+    """ delete list of events """
+    for uid in uids:
+        link = caldb['remotedb'][uid][3]
+        remmsg = caldb['remotedb'][uid][0].partition('MSG')[2].strip()
+        if remmsg:
+            if '%' in remmsg:
+                # strip remind control sequences
+                import re
+                ctrl = re.compile(r"%.")
+                remmsg = ctrl.sub("", remmsg).strip(" %")
+        else:
+            remmsg = uid
+        logger.debug(u'Deleting "{0}" from Google.'.format(
+                remmsg.decode(_encoding)))
+        delete_remote(service, link)
+        del caldb['remotedb'][uid]
 
 def delete_all_remote(onlycalname='all'):
     """ delete all remote events """
@@ -599,36 +593,69 @@ def delete_all_remote(onlycalname='all'):
         evfeed = get_events(service, calid)
         logger.debug(u'Deleting all events from {0}.'.format(calname))
         for e in evfeed.entry:
-            service.DeleteEvent(e.GetEditLink().href)
+            link = e.GetEditLink().href
+            delete_remote(service, link)
 
-def reset():
-    """ reset database and delete all remote events """
-    delete_all_remote()
-    logger.debug(u'Resetting local database.')
-    caldb['remotedb'] = {}
-    caldb['lastsync'] = datetime.strftime(datetime.utcnow(), _qdtformat)
-    caldb.close()
+def add_event(service, event):
+    """ add a single event """
+    gevent = gdata.calendar.CalendarEventEntry()
+    gevent.title = atom.Title(text=event.summary)
+    if event.location:
+        gevent.where.append(gdata.calendar.Where(value_string=event.location))
+    if event.description:
+        gevent.content = atom.Content(text=event.description)
+    gevent.when.append(event.gdatawhen())
+    gevent.transparency = gdata.calendar.Transparency()
+    gevent.transparency.value = event.transp
+    # default settings seem fine for these
+    #   * gd:who/gd:attendeeStatus?
+    #   * gd:eventStatus
+    #   * gd:visibility
+    #   * gd:reminder
+    # http://code.google.com/apis/gdata/docs/1.0/elements.html#gdEventKind
 
-def delete_remote(service, uids):
-    """ delete list of events """
-    for uid in uids:
-        link = caldb['remotedb'][uid][3]
-        remmsg = caldb['remotedb'][uid][0].partition('MSG')[2].strip()
-        if remmsg:
-            if '%' in remmsg:
-                # strip remind control sequences
-                import re
-                ctrl = re.compile(r"%.")
-                remmsg = ctrl.sub("", remmsg).strip(" %")
+    # add filename/linenumber/uid/timezonename as custom properties
+    fn = gdata.ExtendedProperty('filename', event.filename)
+    ln = gdata.ExtendedProperty('linenumber', event.linenumber)
+    uid = gdata.ExtendedProperty('uid', event.uid)
+    tzn = gdata.ExtendedProperty('timezonename', event.timezonename)
+    gevent.extended_property.extend([fn, ln, uid, tzn])
+
+    # uri comes from event.categories.value[0]
+    #   =>  split categories into different calendars
+    cal = 'default'
+    if len(event.categories):
+        cat = event.categories[0].capitalize()
+        if cat in caldb['calendars']:
+            cal = caldb['calendars'][cat]
         else:
-            remmsg = uid
-        logger.debug(u'Deleting "{0}" from Google.'.format(
-                remmsg.decode(_encoding)))
+            # add calendar for new categories
+            cal = new_calendar(service, cat)
+            caldb['calendars'][cat] = cal
+            caldb.sync()
+    uri = '/calendar/feeds/{0}/private/full'.format(cal)
+    redirected = False
+    while True:
         try:
-            service.DeleteEvent(link)
+            new_event = service.InsertEvent(gevent, uri)
         except gdata.service.RequestError, msg:
-            logger.debug(u'...deletion failed: {0}'.format(msg))
-        del caldb['remotedb'][uid]
+            if msg[0]['status'] == 302 and redirected is False:
+                # redirect
+                try:
+                    uri = msg[0]['body'].split('HREF="')[1].split('">here')[0]
+                    logger.debug(u'Request redirected...')
+                    redirected = True
+                except:
+                    logger.debug(u'Could not extract redirection link.')
+                    break
+            else:
+                logger.error(u'...adding event failed: {0}'.format(msg))
+                return gevent, False
+        else:
+            break
+
+    logger.debug(u'New event "{0}" added.'.format(event.summary[0:40]))
+    return new_event, True
 
 def add_events(service, uids, events):
     """ add list of events """
@@ -642,6 +669,14 @@ def add_events(service, uids, events):
                     event.linenumber, remevent.link)
         else:
             logger.error(u'Adding event failed.')
+
+def reset():
+    """ reset database and delete all remote events """
+    delete_all_remote()
+    logger.debug(u'Resetting local database.')
+    caldb['remotedb'] = {}
+    caldb['lastsync'] = datetime.strftime(datetime.utcnow(), _qdtformat)
+    caldb.close()
 
 def execute():
     """ do sync process """
@@ -670,7 +705,7 @@ def execute():
     localevents = get_local_calendar()
     new, deleted = detect_local_changes(localevents)
     # delete remote
-    delete_remote(service, deleted)
+    delete_remote_list(service, deleted)
     caldb.sync()
     # add new events
     add_events(service, new, localevents)
