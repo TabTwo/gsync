@@ -540,22 +540,32 @@ def delete_local(remline, fn, ln, link):
 
 def delete_remote(service, link):
     """ delete event given google link """
-    redirected = False
+    redirected = 0
     while True:
         try:
             service.DeleteEvent(link)
         except gdata.service.RequestError, msg:
-            if msg[0]['status'] == 302 and redirected is False:
+            if msg[0]['status'] == 302 and redirected < 3:
+                logger.debug(u'Redirection of link {0}'.format(link))
                 # redirect
                 try:
                     link = msg[0]['body'].split('HREF="')[1].split('">here')[0]
-                    logger.debug(u'Request redirected...')
-                    redirected = True
+                    logger.debug(u'Trying updated link {0}'.format(link))
+                    redirected += 1
                 except:
                     logger.debug(u'Could not extract redirection link.')
                     break
+            elif msg[0]['status'] == 409 and redirected < 3:
+                logger.debug(u'Conflict with link  {0}'.format(link))
+                # extract edit link from error body
+                newevent = atom.EntryFromString(msg[0]['body'])
+                for l in newevent.link:
+                    if l.rel == 'edit':
+                        link = l.href
+                logger.debug(u'Trying updated link {0}'.format(link))
+                redirected += 1
             else:
-                logger.error(u'...deletion failed: {0}'.format(msg))
+                logger.error(u'...deletion of link:\n\t{0}\nfailed: {1}'.format(link, msg))
                 break
         else:
             break
